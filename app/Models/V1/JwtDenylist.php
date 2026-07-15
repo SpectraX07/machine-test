@@ -6,7 +6,7 @@ use CodeIgniter\Model;
 
 class JwtDenylist extends Model
 {
-    protected $table            = 'jwt_denylists';
+    protected $table            = 'jwt_denylist';
     protected $primaryKey       = 'id';
     protected $useAutoIncrement = true;
     protected $returnType       = 'object';
