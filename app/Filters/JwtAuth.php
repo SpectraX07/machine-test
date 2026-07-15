@@ -31,7 +31,17 @@ class JwtAuth implements FilterInterface
                 return $this->unauthorized('Access token has been revoked.');
             }
 
-            Services::authContext()->setFromJwt($payload);
+            $context = Services::authContext();
+            $context->setFromJwt($payload);
+
+            $userId = $context->id();
+            if ($userId !== null && $userId > 0) {
+                $rbac = Services::rbacService();
+                $context->setAccess(
+                    $rbac->roleSlugsForUser($userId),
+                    $rbac->permissionSlugsForUser($userId)
+                );
+            }
         } catch (ExpiredException) {
             return $this->unauthorized('Access token has expired.');
         } catch (SignatureInvalidException | UnexpectedValueException) {

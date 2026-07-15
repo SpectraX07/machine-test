@@ -2,10 +2,10 @@
 
 namespace Config;
 
-use App\Filters\JwtAuth;
 use App\Libraries\JWTService;
 use App\Services\AuthContext;
 use App\Services\V1\AuthService;
+use App\Services\V1\RbacService;
 use App\Services\V1\UserService;
 use CodeIgniter\Config\BaseService;
 
@@ -27,6 +27,15 @@ class Services extends BaseService
         }
 
         return new AuthService();
+    }
+
+    public static function rbacService(bool $getShared = true): RbacService
+    {
+        if ($getShared) {
+            return static::getSharedInstance('rbacService');
+        }
+
+        return new RbacService();
     }
 
     public static function jwtService(bool $getShared = true): JWTService

@@ -10,6 +10,12 @@ class AuthContext
 
     private ?int $tokenExp = null;
 
+    /** @var list<string> */
+    private array $roles = [];
+
+    /** @var list<string> */
+    private array $permissions = [];
+
     public function setFromJwt(object $payload): void
     {
         $this->user = (object) [
@@ -18,6 +24,16 @@ class AuthContext
         ];
         $this->jti      = isset($payload->jti) ? (string) $payload->jti : null;
         $this->tokenExp = isset($payload->exp) ? (int) $payload->exp : null;
+    }
+
+    /**
+     * @param list<string> $roles
+     * @param list<string> $permissions
+     */
+    public function setAccess(array $roles, array $permissions): void
+    {
+        $this->roles       = array_values($roles);
+        $this->permissions = array_values($permissions);
     }
 
     public function user(): ?object
@@ -40,10 +56,38 @@ class AuthContext
         return $this->tokenExp;
     }
 
+    /**
+     * @return list<string>
+     */
+    public function roles(): array
+    {
+        return $this->roles;
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function permissions(): array
+    {
+        return $this->permissions;
+    }
+
+    public function hasRole(string $slug): bool
+    {
+        return in_array($slug, $this->roles, true);
+    }
+
+    public function hasPermission(string $slug): bool
+    {
+        return in_array($slug, $this->permissions, true);
+    }
+
     public function reset(): void
     {
-        $this->user     = null;
-        $this->jti      = null;
-        $this->tokenExp = null;
+        $this->user        = null;
+        $this->jti         = null;
+        $this->tokenExp    = null;
+        $this->roles       = [];
+        $this->permissions = [];
     }
 }

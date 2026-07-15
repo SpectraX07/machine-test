@@ -4,6 +4,7 @@ namespace App\Controllers\Api\V1;
 
 use App\Exceptions\ApiException;
 use App\Exceptions\BadRequestException;
+use App\Exceptions\ForbiddenException;
 use App\Exceptions\NotFoundException;
 use App\Exceptions\UnauthorizedException;
 use App\Libraries\ApiResponse;
@@ -87,6 +88,8 @@ class ApiController extends ResourceController
             return $callback();
         } catch (UnauthorizedException $e) {
             return $this->unauthorized($e->getMessage());
+        } catch (ForbiddenException $e) {
+            return $this->forbidden($e->getMessage());
         } catch (NotFoundException $e) {
             return $this->notFound($e->getMessage());
         } catch (BadRequestException $e) {
