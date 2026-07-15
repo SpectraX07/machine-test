@@ -10,8 +10,7 @@ class AuthContext
 
     private ?int $tokenExp = null;
 
-    /** @var list<string> */
-    private array $roles = [];
+    private ?string $role = null;
 
     /** @var list<string> */
     private array $permissions = [];
@@ -27,12 +26,11 @@ class AuthContext
     }
 
     /**
-     * @param list<string> $roles
      * @param list<string> $permissions
      */
-    public function setAccess(array $roles, array $permissions): void
+    public function setAccess(?string $role, array $permissions): void
     {
-        $this->roles       = array_values($roles);
+        $this->role        = $role;
         $this->permissions = array_values($permissions);
     }
 
@@ -56,12 +54,9 @@ class AuthContext
         return $this->tokenExp;
     }
 
-    /**
-     * @return list<string>
-     */
-    public function roles(): array
+    public function role(): ?string
     {
-        return $this->roles;
+        return $this->role;
     }
 
     /**
@@ -74,7 +69,7 @@ class AuthContext
 
     public function hasRole(string $slug): bool
     {
-        return in_array($slug, $this->roles, true);
+        return $this->role === $slug;
     }
 
     public function hasPermission(string $slug): bool
@@ -87,7 +82,7 @@ class AuthContext
         $this->user        = null;
         $this->jti         = null;
         $this->tokenExp    = null;
-        $this->roles       = [];
+        $this->role        = null;
         $this->permissions = [];
     }
 }

@@ -120,12 +120,11 @@ class UserService
     }
 
     /**
-     * @param list<string> $roleSlugs
-     * @return list<object>
+     * Set the user's single role by slug.
      */
-    public function syncRoles(int $id, array $roleSlugs): array
+    public function assignRole(int $id, string $roleSlug): object
     {
-        return $this->rbacService->syncUserRoles($id, $roleSlugs);
+        return $this->rbacService->assignRole($id, $roleSlug);
     }
 
     private function normalizePerPage(?int $perPage): int

@@ -12,7 +12,7 @@ class User extends Model
     protected $returnType = 'object';
     protected $useSoftDeletes = true;
     protected $protectFields = true;
-    protected $allowedFields = ['name', 'email', 'phone', 'status', 'password'];
+    protected $allowedFields = ['name', 'email', 'phone', 'status', 'password', 'role_id'];
 
     protected bool $allowEmptyInserts = false;
     protected bool $updateOnlyChanged = true;
@@ -36,7 +36,7 @@ class User extends Model
     protected $beforeUpdate = ['hashPassword'];
 
     /** Columns safe to return in API responses (never password). */
-    public const PUBLIC_FIELDS = 'id, name, email, phone, status, created_at, updated_at';
+    public const PUBLIC_FIELDS = 'id, name, email, phone, status, role_id, created_at, updated_at';
 
     protected function hashPassword(array $data): array
     {
@@ -81,5 +81,61 @@ class User extends Model
         }
 
         return $builder->get()->getResult();
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function permissionSlugsForUser(int $userId): array
+    {
+        $user = $this->withDeleted()->select('role_id')->find($userId);
+
+        if (! $user || empty($user->role_id)) {
+            return [];
+        }
+
+        $rows = $this->db->table('permissions')
+            ->select('permissions.slug')
+            ->join('role_permissions', 'role_permissions.permission_id = permissions.id')
+            ->where('role_permissions.role_id', (int) $user->role_id)
+            ->orderBy('permissions.slug', 'ASC')
+            ->get()
+            ->getResult();
+
+        return array_values(array_map(static fn ($row) => (string) $row->slug, $rows));
+    }
+
+    public function roleSlugForUser(int $userId): ?string
+    {
+        $row = $this->db->table('users')
+            ->select('roles.slug')
+            ->join('roles', 'roles.id = users.role_id', 'left')
+            ->where('users.id', $userId)
+            ->get()
+            ->getFirstRow();
+
+        if (! $row || $row->slug === null) {
+            return null;
+        }
+
+        return (string) $row->slug;
+    }
+
+    public function hasPermission(int $userId, string $permissionSlug): bool
+    {
+        $user = $this->withDeleted()->select('role_id')->find($userId);
+
+        if (! $user || empty($user->role_id)) {
+            return false;
+        }
+
+        $row = $this->db->table('role_permissions')
+            ->join('permissions', 'permissions.id = role_permissions.permission_id')
+            ->where('role_permissions.role_id', (int) $user->role_id)
+            ->where('permissions.slug', $permissionSlug)
+            ->get()
+            ->getFirstRow();
+
+        return $row !== null;
     }
 }

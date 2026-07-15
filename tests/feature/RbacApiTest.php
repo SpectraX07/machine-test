@@ -57,7 +57,7 @@ final class RbacApiTest extends CIUnitTestCase
 
     private function promoteToAdmin(int $userId): void
     {
-        Services::rbacService()->syncUserRoles($userId, ['admin']);
+        Services::rbacService()->assignRole($userId, 'admin');
     }
 
     public function testDefaultUserCannotListUsers(): void
@@ -72,15 +72,15 @@ final class RbacApiTest extends CIUnitTestCase
         $result->assertJSONFragment(['success' => false]);
     }
 
-    public function testDefaultUserCannotAssignRoles(): void
+    public function testDefaultUserCannotAssignRole(): void
     {
         $user   = $this->registerUser();
         $tokens = $this->loginUser();
 
         $result = $this->withHeaders($this->authHeaders($tokens['access_token']))
             ->withBodyFormat('json')
-            ->put('api/v1/users/' . $user['id'] . '/roles', [
-                'role_slugs' => ['admin'],
+            ->put('api/v1/users/' . $user['id'] . '/role', [
+                'role_slug' => 'admin',
             ]);
 
         $result->assertStatus(403);
@@ -158,17 +158,16 @@ final class RbacApiTest extends CIUnitTestCase
 
         $assign = $this->withHeaders($this->authHeaders($tokens['access_token']))
             ->withBodyFormat('json')
-            ->put('api/v1/users/' . $target['id'] . '/roles', [
-                'role_slugs' => ['manager'],
+            ->put('api/v1/users/' . $target['id'] . '/role', [
+                'role_slug' => 'manager',
             ]);
 
         $assign->assertStatus(200);
         $assigned = json_decode($assign->getJSON(), true)['data'];
-        $this->assertCount(1, $assigned);
-        $this->assertSame('manager', $assigned[0]['slug']);
+        $this->assertSame('manager', $assigned['slug']);
 
         $managerTokens = $this->loginUser('manager@example.com');
-        $this->assertContains('manager', $managerTokens['user']['roles']);
+        $this->assertSame('manager', $managerTokens['user']['role']);
         $this->assertContains('users.list', $managerTokens['user']['permissions']);
         $this->assertNotContains('users.delete', $managerTokens['user']['permissions']);
 
@@ -189,8 +188,8 @@ final class RbacApiTest extends CIUnitTestCase
 
         $result = $this->withHeaders($this->authHeaders($tokens['access_token']))
             ->withBodyFormat('json')
-            ->put('api/v1/users/' . $user['id'] . '/roles', [
-                'role_slugs' => ['does-not-exist'],
+            ->put('api/v1/users/' . $user['id'] . '/role', [
+                'role_slug' => 'does-not-exist',
             ]);
 
         $result->assertStatus(400);

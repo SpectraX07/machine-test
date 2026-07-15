@@ -91,27 +91,21 @@ class UserController extends ApiController
         });
     }
 
-    public function syncRoles($id = null): ResponseInterface
+    public function assignRole($id = null): ResponseInterface
     {
         return $this->handleApi(function () use ($id) {
             $payload = $this->getJsonPayload();
-
-            if (! isset($payload['role_slugs']) || ! is_array($payload['role_slugs'])) {
-                return $this->validationError([
-                    'role_slugs' => 'The role_slugs field must be an array of role slugs.',
-                ]);
-            }
 
             if (! $this->validateData($payload, RoleValidation::assign())) {
                 return $this->validationError($this->validator->getErrors());
             }
 
-            $roles = $this->userService->syncRoles(
+            $role = $this->userService->assignRole(
                 (int) $id,
-                $this->validator->getValidated()['role_slugs']
+                $this->validator->getValidated()['role_slug']
             );
 
-            return $this->success($roles, 'User roles updated successfully.');
+            return $this->success($role, 'User role updated successfully.');
         });
     }
 }

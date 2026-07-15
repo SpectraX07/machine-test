@@ -61,7 +61,7 @@ Request
 | `app/Controllers/Api/V1/` | HTTP layer (`ApiController`, `AuthController`, `UserController`, `RoleController`, `PermissionController`) |
 | `app/Services/V1/` | Business logic (`AuthService`, `UserService`, `RbacService`) |
 | `app/Services/AuthContext.php` | Request-scoped identity, roles, permissions |
-| `app/Models/V1/` | `User`, `RefreshToken`, `JwtDenylist`, `Role`, `Permission`, `UserRole` |
+| `app/Models/V1/` | `User`, `RefreshToken`, `JwtDenylist`, `Role`, `Permission` |
 | `app/Libraries/` | `JWTService`, `ApiResponse` |
 | `app/Filters/JwtAuth.php` | Bearer token verification + denylist + load RBAC |
 | `app/Filters/PermissionAuth.php` | Require permission slug(s) on a route |
@@ -191,7 +191,7 @@ Response `data`:
     "email": "...",
     "phone": "...",
     "status": "Active",
-    "roles": ["user"],
+    "role": "user",
     "permissions": ["users.view"],
     "created_at": "...",
     "updated_at": "..."
@@ -203,7 +203,7 @@ Response `data`:
 }
 ```
 
-New registrations automatically receive the default role from `Config\Rbac::$defaultRole` (`user`).
+New registrations automatically receive the default role from `Config\Rbac::$defaultRole` (`user`) via `users.role_id`.
 
 ### Refresh (rotation)
 
@@ -258,8 +258,8 @@ Access is **role-based**: users are assigned roles; roles grant permissions; rou
 |------|----------|
 | Permissions | Defined in `app/Config/Rbac.php` and **seeded only** — no create/update/delete API |
 | Roles | Same — seeded from config; no role CRUD API |
-| Assign access | Change which roles a user has via `PUT /api/v1/users/{id}/roles` |
-| Default role | New users get `user` on register |
+| Assign access | Set the user's single role via `PUT /api/v1/users/{id}/role` |
+| Default role | New users get `user` on register (`users.role_id`) |
 | Enforcement | Route filter `permission:<slug>` (OR if multiple slugs) |
 
 ### Seeded permissions
@@ -309,22 +309,22 @@ php spark tinker
 ```
 
 ```php
-\Config\Services::rbacService()->syncUserRoles($userId, ['admin']);
+\Config\Services::rbacService()->assignRole($userId, 'admin');
 ```
 
-After that, use `PUT /api/v1/users/{id}/roles` (requires `roles.assign`) for further assignments.
+After that, use `PUT /api/v1/users/{id}/role` (requires `roles.assign`) for further assignments.
 
-### Assigning roles
+### Assigning a role
 
 ```http
-PUT /api/v1/users/5/roles
+PUT /api/v1/users/5/role
 Authorization: Bearer <access_token>
 Content-Type: application/json
 
-{ "role_slugs": ["manager"] }
+{ "role_slug": "manager" }
 ```
 
-Requires `roles.assign`. Replaces the user's roles entirely with the given list.
+Requires `roles.assign`. Sets the user's single `role_id` (replaces any previous role).
 
 ---
 
@@ -346,10 +346,10 @@ Base path: `/api/v1`
 | Method | Path | Permission | Description |
 |--------|------|------------|-------------|
 | `GET` | `/users` | `users.list` | List users (cursor pagination) |
-| `GET` | `/users/{id}` | `users.view` | Show one user (includes `roles` + `permissions`) |
+| `GET` | `/users/{id}` | `users.view` | Show one user (includes `role` + `permissions`) |
 | `PUT` / `PATCH` | `/users/{id}` | `users.update` | Update user |
 | `DELETE` | `/users/{id}` | `users.delete` | Soft-delete user |
-| `PUT` | `/users/{id}/roles` | `roles.assign` | Replace user roles (`role_slugs` array) |
+| `PUT` | `/users/{id}/role` | `roles.assign` | Set the user's single role (`role_slug`) |
 | `GET` | `/roles` | `roles.list` | List roles (`?with_permissions=1` optional) |
 | `GET` | `/roles/{id}` | `roles.view` | Show role with permissions |
 | `GET` | `/permissions` | `permissions.list` | List seeded permissions (read-only) |
@@ -488,7 +488,7 @@ Migration creates `jwt_denylist` with:
 | `roles` | `id`, `name`, `slug` (unique), `description`, timestamps |
 | `permissions` | `id`, `name`, `slug` (unique), `description`, timestamps |
 | `role_permissions` | composite PK `(role_id, permission_id)` |
-| `user_roles` | composite PK `(user_id, role_id)` |
+| `users.role_id` | FK-style pointer to the user's single role (nullable until assigned) |
 
 ---
 
@@ -498,7 +498,7 @@ Migration creates `jwt_denylist` with:
 
 - **`ApiController`** — shared JSON helpers, validation error shaping, exception → HTTP mapping.
 - **`AuthController`** — login, refresh, revoke, logout; delegates to `AuthService`; logout reads identity from `AuthContext`.
-- **`UserController`** — register + resource CRUD + `syncRoles`; list builds cursor/`per_page` from query string.
+- **`UserController`** — register + resource CRUD + `assignRole`; list builds cursor/`per_page` from query string.
 - **`RoleController`** — read-only list/show (seeded roles).
 - **`PermissionController`** — read-only list (seeded permissions).
 
@@ -506,15 +506,15 @@ Migration creates `jwt_denylist` with:
 
 - **`AuthService`** — credential check, token issue/rotate/revoke, denylist coordination; login/refresh return RBAC-enriched user.
 - **`UserService`** — register (assigns default role)/find/list/update/delete; cursor pagination; role sync.
-- **`RbacService`** — list roles/permissions, assign default role, sync user roles, enrich user with roles/permissions.
-- **`AuthContext`** — holds authenticated `id`, `email`, `jti`, `tokenExp`, `roles`, `permissions` for the current request only.
+- **`RbacService`** — list roles/permissions, assign default/single role, enrich user with role/permissions.
+- **`AuthContext`** — holds authenticated `id`, `email`, `jti`, `tokenExp`, `role`, `permissions` for the current request only.
 
 ### Models
 
 - **`User`** — soft deletes, password hashing callback, `findByEmail`, `paginateByCursor`, `toPublic`.
 - **`RefreshToken`** — hash-on-save, find/validate/revoke helpers.
 - **`JwtDenylist`** — `deny()`, `isDenied()`, `purgeExpired()`.
-- **`Role` / `Permission` / `UserRole`** — RBAC persistence and permission resolution.
+- **`Role` / `Permission`** — RBAC catalog; user role lives on `users.role_id`.
 
 ### Libraries
 
@@ -589,7 +589,7 @@ Or use the included `Caddyfile` / FrankenPHP worker as preferred for your enviro
 1. `POST /api/v1/register` → create user (`status: Active` if they should be able to log in); receives default `user` role
 2. `POST /api/v1/login` → store `access_token` + `refresh_token`; inspect `user.permissions`
 3. Call protected APIs with `Authorization: Bearer <access_token>` (must hold the route permission)
-4. An admin with `roles.assign` promotes users via `PUT /api/v1/users/{id}/roles`
+4. An admin with `roles.assign` promotes users via `PUT /api/v1/users/{id}/role`
 5. On `401` “expired” → `POST /api/v1/auth/refresh` with refresh token; replace both tokens
 6. On logout → `POST /api/v1/auth/logout` with Bearer header (optionally include refresh token)
 
@@ -649,7 +649,7 @@ app/Services/V1/AuthService.php
 app/Services/V1/UserService.php
 app/Services/V1/RbacService.php
 app/Libraries/JWTService.php
-app/Models/V1/{User,RefreshToken,JwtDenylist,Role,Permission,UserRole}.php
+app/Models/V1/{User,RefreshToken,JwtDenylist,Role,Permission}.php
 app/Database/Seeds/RbacSeeder.php
 tests/feature/AuthApiTest.php
 tests/feature/RbacApiTest.php

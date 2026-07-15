@@ -38,7 +38,7 @@ class JwtAuth implements FilterInterface
             if ($userId !== null && $userId > 0) {
                 $rbac = Services::rbacService();
                 $context->setAccess(
-                    $rbac->roleSlugsForUser($userId),
+                    $rbac->roleSlugForUser($userId),
                     $rbac->permissionSlugsForUser($userId)
                 );
             }

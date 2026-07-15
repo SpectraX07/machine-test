@@ -57,7 +57,7 @@ final class AuthApiTest extends CIUnitTestCase
 
     private function promoteToAdmin(int $userId): void
     {
-        Services::rbacService()->syncUserRoles($userId, ['admin']);
+        Services::rbacService()->assignRole($userId, 'admin');
     }
 
     public function testRegisterValidationFails(): void
@@ -72,7 +72,7 @@ final class AuthApiTest extends CIUnitTestCase
     public function testRegisterAndLoginFlow(): void
     {
         $user = $this->registerUser();
-        $this->assertSame(['user'], $user['roles']);
+        $this->assertSame('user', $user['role']);
         $this->assertContains('users.view', $user['permissions']);
 
         $tokens = $this->loginUser();
@@ -80,7 +80,7 @@ final class AuthApiTest extends CIUnitTestCase
         $this->assertArrayHasKey('access_token', $tokens);
         $this->assertArrayHasKey('refresh_token', $tokens);
         $this->assertSame('Bearer', $tokens['token_type']);
-        $this->assertSame(['user'], $tokens['user']['roles']);
+        $this->assertSame('user', $tokens['user']['role']);
     }
 
     public function testLoginWithInvalidCredentialsReturns401(): void
@@ -116,7 +116,7 @@ final class AuthApiTest extends CIUnitTestCase
 
         $body = json_decode($result->getJSON(), true);
         $this->assertSame('test@example.com', $body['data']['email']);
-        $this->assertSame(['user'], $body['data']['roles']);
+        $this->assertSame('user', $body['data']['role']);
     }
 
     public function testUpdateUser(): void
