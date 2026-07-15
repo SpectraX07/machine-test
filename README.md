@@ -1,6 +1,6 @@
 # Machine Test API (CodeIgniter 4)
 
-JWT-authenticated REST API built on CodeIgniter 4 for user registration, login, token lifecycle (refresh / revoke / logout), and CRUD user management with cursor pagination.
+JWT-authenticated REST API built on CodeIgniter 4 for user registration, login, token lifecycle (refresh / revoke / logout), RBAC access control, and CRUD user management with cursor pagination.
 
 ---
 
@@ -10,13 +10,14 @@ JWT-authenticated REST API built on CodeIgniter 4 for user registration, login, 
 2. [Architecture](#architecture)
 3. [Request lifecycle](#request-lifecycle)
 4. [Authentication & tokens](#authentication--tokens)
-5. [API endpoints](#api-endpoints)
-6. [Response format](#response-format)
-7. [Database schema](#database-schema)
-8. [Layer-by-layer guide](#layer-by-layer-guide)
-9. [Configuration & setup](#configuration--setup)
-10. [Testing](#testing)
-11. [Security notes](#security-notes)
+5. [RBAC (roles & permissions)](#rbac-roles--permissions)
+6. [API endpoints](#api-endpoints)
+7. [Response format](#response-format)
+8. [Database schema](#database-schema)
+9. [Layer-by-layer guide](#layer-by-layer-guide)
+10. [Configuration & setup](#configuration--setup)
+11. [Testing](#testing)
+12. [Security notes](#security-notes)
 
 ---
 
@@ -26,6 +27,7 @@ JWT-authenticated REST API built on CodeIgniter 4 for user registration, login, 
 |--------|----------------|
 | Framework | CodeIgniter 4 (`^4.7`), PHP `^8.2` |
 | Auth | JWT access tokens (HS256) + opaque refresh tokens |
+| Authorization | RBAC — roles → permissions; permissions are seeded only |
 | JWT library | `firebase/php-jwt` |
 | Access revocation | JWT denylist by `jti` |
 | Refresh storage | SHA-256 hashed tokens in `refresh_tokens` |
@@ -33,7 +35,7 @@ JWT-authenticated REST API built on CodeIgniter 4 for user registration, login, 
 | Pagination | Keyset / cursor (`id > cursor`), not OFFSET |
 
 Public routes: `register`, `login`, `auth/refresh`, `auth/revoke`.  
-Protected routes (require `Authorization: Bearer <access_token>`): user CRUD + `auth/logout`.
+Protected routes require `Authorization: Bearer <access_token>`; most also require a permission via the `permission:` filter.
 
 ---
 
@@ -43,7 +45,7 @@ The app follows a thin-controller / service / model layout, versioned under `V1`
 
 ```
 Request
-  → Filters (CORS, then optional JwtAuth)
+  → Filters (CORS → JwtAuth → PermissionAuth)
   → Controller (validate JSON, call service, map to HTTP)
   → Service (business rules, orchestration)
   → Model (persistence, hashing callbacks)
@@ -55,15 +57,18 @@ Request
 | Path | Role |
 |------|------|
 | `app/Config/Routes/ApiV1.php` | API route definitions |
-| `app/Controllers/Api/V1/` | HTTP layer (`ApiController`, `AuthController`, `UserController`) |
-| `app/Services/V1/` | Business logic (`AuthService`, `UserService`) |
-| `app/Services/AuthContext.php` | Request-scoped JWT identity (set by filter) |
-| `app/Models/V1/` | `User`, `RefreshToken`, `JwtDenylist` |
+| `app/Config/Rbac.php` | Seeded permission + role catalog |
+| `app/Controllers/Api/V1/` | HTTP layer (`ApiController`, `AuthController`, `UserController`, `RoleController`, `PermissionController`) |
+| `app/Services/V1/` | Business logic (`AuthService`, `UserService`, `RbacService`) |
+| `app/Services/AuthContext.php` | Request-scoped identity, roles, permissions |
+| `app/Models/V1/` | `User`, `RefreshToken`, `JwtDenylist`, `Role`, `Permission`, `UserRole` |
 | `app/Libraries/` | `JWTService`, `ApiResponse` |
-| `app/Filters/JwtAuth.php` | Bearer token verification + denylist check |
+| `app/Filters/JwtAuth.php` | Bearer token verification + denylist + load RBAC |
+| `app/Filters/PermissionAuth.php` | Require permission slug(s) on a route |
 | `app/Validation/V1/` | Validation rule sets |
 | `app/Exceptions/` | Domain exceptions mapped to HTTP statuses |
 | `app/Database/Migrations/` | Schema |
+| `app/Database/Seeds/RbacSeeder.php` | Seeds permissions/roles from config |
 
 ### Dependency wiring
 
@@ -71,10 +76,11 @@ Services are registered in `app/Config/Services.php`:
 
 - `Services::userService()` → `UserService`
 - `Services::authService()` → `AuthService`
+- `Services::rbacService()` → `RbacService`
 - `Services::jwtService()` → `JWTService`
 - `Services::authContext()` → `AuthContext` (shared per request)
 
-The `jwt` filter alias is registered in `app/Config/Filters.php` and applied to protected route groups.
+Filter aliases in `app/Config/Filters.php`: `jwt`, `permission`.
 
 ---
 
@@ -109,6 +115,7 @@ Every action wraps work in `ApiController::handleApi()`:
 | Exception | HTTP |
 |-----------|------|
 | `UnauthorizedException` | 401 |
+| `ForbiddenException` | 403 |
 | `NotFoundException` | 404 |
 | `BadRequestException` | 400 |
 | `ApiException` | custom status |
@@ -120,7 +127,16 @@ Every action wraps work in `ApiController::handleApi()`:
 2. Verify signature / expiry via `JWTService::verify()`
 3. Reject if `jti` is missing or present in the denylist
 4. Populate `AuthContext` from claims (`uid`, `email`, `jti`, `exp`)
-5. After the response, `AuthContext::reset()` clears request state
+5. Load the user's role + permission slugs from the DB into `AuthContext`
+6. After the response, `AuthContext::reset()` clears request state
+
+### 5. PermissionAuth filter
+
+Applied per-route after `jwt`, e.g. `permission:users.list`.
+
+- Reads required permission slug(s) from filter arguments (comma-separated = OR)
+- Checks `AuthContext::hasPermission(...)`
+- Missing permission → `403`
 
 ---
 
@@ -169,13 +185,25 @@ Response `data`:
 
 ```json
 {
-  "user": { "id", "name", "email", "phone", "status", "created_at", "updated_at" },
+  "user": {
+    "id": 1,
+    "name": "...",
+    "email": "...",
+    "phone": "...",
+    "status": "Active",
+    "roles": ["user"],
+    "permissions": ["users.view"],
+    "created_at": "...",
+    "updated_at": "..."
+  },
   "access_token": "...",
   "refresh_token": "...",
   "token_type": "Bearer",
   "expires_in": 900
 }
 ```
+
+New registrations automatically receive the default role from `Config\Rbac::$defaultRole` (`user`).
 
 ### Refresh (rotation)
 
@@ -220,6 +248,86 @@ JWTs are self-contained; they remain valid until `exp` unless the server tracks 
 
 ---
 
+## RBAC (roles & permissions)
+
+Access is **role-based**: users are assigned roles; roles grant permissions; routes require permission slugs.
+
+### Design rules
+
+| Rule | Behavior |
+|------|----------|
+| Permissions | Defined in `app/Config/Rbac.php` and **seeded only** — no create/update/delete API |
+| Roles | Same — seeded from config; no role CRUD API |
+| Assign access | Change which roles a user has via `PUT /api/v1/users/{id}/roles` |
+| Default role | New users get `user` on register |
+| Enforcement | Route filter `permission:<slug>` (OR if multiple slugs) |
+
+### Seeded permissions
+
+| Slug | Meaning |
+|------|---------|
+| `users.list` | List users |
+| `users.view` | View one user |
+| `users.update` | Update a user |
+| `users.delete` | Soft-delete a user |
+| `roles.list` | List roles |
+| `roles.view` | View a role (+ its permissions) |
+| `roles.assign` | Assign roles to a user |
+| `permissions.list` | List the permission catalog |
+
+### Seeded roles
+
+| Role | Permissions |
+|------|-------------|
+| `admin` | All permissions (`*`) |
+| `manager` | `users.list`, `users.view`, `users.update`, `roles.list`, `roles.view`, `permissions.list` |
+| `user` | `users.view` |
+
+To change the catalog, edit `Config\Rbac` and re-run:
+
+```bash
+php spark db:seed RbacSeeder
+```
+
+The seeder upserts by slug and rebuilds `role_permissions` (safe to re-run).
+
+### How enforcement works
+
+1. `JwtAuth` loads the caller's permission slugs into `AuthContext` on every request (from DB — not embedded in the JWT).
+2. Route declares `['filter' => 'permission:users.delete']`.
+3. `PermissionAuth` allows the request only if the context has that permission; otherwise `403`.
+
+Role changes take effect on the **next** request (no token re-issue required), because permissions are resolved from the database each time.
+
+### Bootstrapping the first admin
+
+Registration always assigns `user`. Promote the first account outside the API (or temporarily from a one-off script):
+
+```bash
+php spark tinker
+# or in a temporary seeder / CLI:
+```
+
+```php
+\Config\Services::rbacService()->syncUserRoles($userId, ['admin']);
+```
+
+After that, use `PUT /api/v1/users/{id}/roles` (requires `roles.assign`) for further assignments.
+
+### Assigning roles
+
+```http
+PUT /api/v1/users/5/roles
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{ "role_slugs": ["manager"] }
+```
+
+Requires `roles.assign`. Replaces the user's roles entirely with the given list.
+
+---
+
 ## API endpoints
 
 Base path: `/api/v1`
@@ -233,15 +341,19 @@ Base path: `/api/v1`
 | `POST` | `/auth/refresh` | refresh_token | Rotate tokens |
 | `POST` | `/auth/revoke` | refresh_token | Revoke refresh (+ linked access) |
 
-### Protected (`jwt` filter)
+### Protected (`jwt` filter; permission noted per route)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/users` | List users (cursor pagination) |
-| `GET` | `/users/{id}` | Show one user |
-| `PUT` / `PATCH` | `/users/{id}` | Update user |
-| `DELETE` | `/users/{id}` | Soft-delete user |
-| `POST` | `/auth/logout` | Denylist access; revoke one or all refresh tokens |
+| Method | Path | Permission | Description |
+|--------|------|------------|-------------|
+| `GET` | `/users` | `users.list` | List users (cursor pagination) |
+| `GET` | `/users/{id}` | `users.view` | Show one user (includes `roles` + `permissions`) |
+| `PUT` / `PATCH` | `/users/{id}` | `users.update` | Update user |
+| `DELETE` | `/users/{id}` | `users.delete` | Soft-delete user |
+| `PUT` | `/users/{id}/roles` | `roles.assign` | Replace user roles (`role_slugs` array) |
+| `GET` | `/roles` | `roles.list` | List roles (`?with_permissions=1` optional) |
+| `GET` | `/roles/{id}` | `roles.view` | Show role with permissions |
+| `GET` | `/permissions` | `permissions.list` | List seeded permissions (read-only) |
+| `POST` | `/auth/logout` | *(authenticated only)* | Denylist access; revoke refresh token(s) |
 
 ### Register / update validation
 
@@ -369,7 +481,14 @@ Migration creates `jwt_denylist` with:
 | `expires_at` | Row meaningful until this time |
 | `created_at` | |
 
-The model (`JwtDenylist`) uses table name `jwt_denylists` — keep model and migration table names aligned when deploying.
+### `roles` / `permissions`
+
+| Table | Key columns |
+|-------|-------------|
+| `roles` | `id`, `name`, `slug` (unique), `description`, timestamps |
+| `permissions` | `id`, `name`, `slug` (unique), `description`, timestamps |
+| `role_permissions` | composite PK `(role_id, permission_id)` |
+| `user_roles` | composite PK `(user_id, role_id)` |
 
 ---
 
@@ -379,19 +498,23 @@ The model (`JwtDenylist`) uses table name `jwt_denylists` — keep model and mig
 
 - **`ApiController`** — shared JSON helpers, validation error shaping, exception → HTTP mapping.
 - **`AuthController`** — login, refresh, revoke, logout; delegates to `AuthService`; logout reads identity from `AuthContext`.
-- **`UserController`** — register + resource CRUD; list builds cursor/`per_page` from query string.
+- **`UserController`** — register + resource CRUD + `syncRoles`; list builds cursor/`per_page` from query string.
+- **`RoleController`** — read-only list/show (seeded roles).
+- **`PermissionController`** — read-only list (seeded permissions).
 
 ### Services
 
-- **`AuthService`** — credential check, token issue/rotate/revoke, denylist coordination.
-- **`UserService`** — register/find/list/update/delete; cursor pagination (`DEFAULT_PER_PAGE=25`, `MAX=100`).
-- **`AuthContext`** — holds authenticated `id`, `email`, `jti`, `tokenExp` for the current request only.
+- **`AuthService`** — credential check, token issue/rotate/revoke, denylist coordination; login/refresh return RBAC-enriched user.
+- **`UserService`** — register (assigns default role)/find/list/update/delete; cursor pagination; role sync.
+- **`RbacService`** — list roles/permissions, assign default role, sync user roles, enrich user with roles/permissions.
+- **`AuthContext`** — holds authenticated `id`, `email`, `jti`, `tokenExp`, `roles`, `permissions` for the current request only.
 
 ### Models
 
 - **`User`** — soft deletes, password hashing callback, `findByEmail`, `paginateByCursor`, `toPublic`.
 - **`RefreshToken`** — hash-on-save, find/validate/revoke helpers.
 - **`JwtDenylist`** — `deny()`, `isDenied()`, `purgeExpired()`.
+- **`Role` / `Permission` / `UserRole`** — RBAC persistence and permission resolution.
 
 ### Libraries
 
@@ -403,6 +526,7 @@ The model (`JwtDenylist`) uses table name `jwt_denylists` — keep model and mig
 Hierarchy under `ApiException`:
 
 - `UnauthorizedException` (401)
+- `ForbiddenException` (403)
 - `NotFoundException` (404)
 - `BadRequestException` (400, optional `errors` payload)
 
@@ -441,11 +565,14 @@ jwt.secret = a-long-random-secret-at-least-32-chars
 
 JWT timings live in `app/Config/JWT.php` (defaults: access `900`, refresh `604800`). Secret is loaded from `env('jwt.secret')`.
 
-### Migrate
+### Migrate & seed
 
 ```bash
 php spark migrate
+php spark db:seed RbacSeeder
 ```
+
+`DatabaseSeeder` also calls `RbacSeeder` (`php spark db:seed`).
 
 ### Serve
 
@@ -459,26 +586,23 @@ Or use the included `Caddyfile` / FrankenPHP worker as preferred for your enviro
 
 ### Typical client flow
 
-1. `POST /api/v1/register` → create user (`status: Active` if they should be able to log in)
-2. `POST /api/v1/login` → store `access_token` + `refresh_token`
-3. Call protected APIs with `Authorization: Bearer <access_token>`
-4. On `401` “expired” → `POST /api/v1/auth/refresh` with refresh token; replace both tokens
-5. On logout → `POST /api/v1/auth/logout` with Bearer header (optionally include refresh token)
+1. `POST /api/v1/register` → create user (`status: Active` if they should be able to log in); receives default `user` role
+2. `POST /api/v1/login` → store `access_token` + `refresh_token`; inspect `user.permissions`
+3. Call protected APIs with `Authorization: Bearer <access_token>` (must hold the route permission)
+4. An admin with `roles.assign` promotes users via `PUT /api/v1/users/{id}/roles`
+5. On `401` “expired” → `POST /api/v1/auth/refresh` with refresh token; replace both tokens
+6. On logout → `POST /api/v1/auth/logout` with Bearer header (optionally include refresh token)
 
 ---
 
 ## Testing
 
-Feature coverage lives in `tests/feature/AuthApiTest.php` (migrations refreshed per test):
+Feature coverage:
 
-- Register validation / register+login
-- Invalid credentials → 401
-- Protected route without token → 401
-- Show / update / soft-delete user
-- Cursor pagination across pages
-- Refresh rotation (old refresh + old access rejected; new access works)
-- Revoke blocks refresh
-- Logout denylists access and invalidates refresh
+- `tests/feature/AuthApiTest.php` — register/login, tokens, user CRUD (with elevated roles where needed), refresh/revoke/logout
+- `tests/feature/RbacApiTest.php` — default user `403`s, admin role/permission listing, role assignment, manager vs admin capability split
+
+Both seed `RbacSeeder` via `DatabaseTestTrait`.
 
 Run:
 
@@ -488,7 +612,7 @@ composer test
 vendor/bin/phpunit
 ```
 
-Ensure `database.tests.*` in `.env` points at a dedicated test database.
+Ensure `database.tests.*` in `.env` points at a dedicated test database (SQLite `:memory:` is configured by default under the `tests` group).
 
 ---
 
@@ -502,22 +626,31 @@ Ensure `database.tests.*` in `.env` points at a dedicated test database.
 6. Set a strong unique `jwt.secret` in production; do not commit `.env`.
 7. Soft-deleted users remain in DB but are excluded from cursor listing (`deleted_at IS NULL`).
 8. CORS is wide open by default (`*`) — tighten `app/Config/Cors.php` for production frontends.
+9. **Permissions are not editable via API** — change `Config\Rbac` and re-seed.
+10. **Authorization is checked every request** from DB-backed roles (JWT does not embed permissions).
 
 ---
 
 ## Quick reference: key files
 
 ```
-app/Config/Routes/ApiV1.php          # Routes
+app/Config/Routes/ApiV1.php          # Routes + permission filters
+app/Config/Rbac.php                  # Permission/role catalog (source of seed)
 app/Config/JWT.php                   # Secret + TTLs
 app/Config/Services.php              # DI factories
-app/Config/Filters.php               # jwt alias + globals
-app/Filters/JwtAuth.php              # Bearer + denylist gate
+app/Config/Filters.php               # jwt + permission aliases
+app/Filters/JwtAuth.php              # Bearer + denylist + load RBAC
+app/Filters/PermissionAuth.php       # Permission gate
 app/Controllers/Api/V1/AuthController.php
 app/Controllers/Api/V1/UserController.php
-app/Services/V1/AuthService.php      # Token lifecycle
+app/Controllers/Api/V1/RoleController.php
+app/Controllers/Api/V1/PermissionController.php
+app/Services/V1/AuthService.php
 app/Services/V1/UserService.php
+app/Services/V1/RbacService.php
 app/Libraries/JWTService.php
-app/Models/V1/{User,RefreshToken,JwtDenylist}.php
+app/Models/V1/{User,RefreshToken,JwtDenylist,Role,Permission,UserRole}.php
+app/Database/Seeds/RbacSeeder.php
 tests/feature/AuthApiTest.php
+tests/feature/RbacApiTest.php
 ```
