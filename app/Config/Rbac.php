@@ -57,6 +57,11 @@ class Rbac extends BaseConfig
             'description' => 'Assign or replace roles on a user.',
         ],
         [
+            'slug'        => 'roles.manage_permissions',
+            'name'        => 'Manage role permissions',
+            'description' => 'Assign or replace permissions on a role.',
+        ],
+        [
             'slug'        => 'permissions.list',
             'name'        => 'List permissions',
             'description' => 'View the seeded permission catalog.',

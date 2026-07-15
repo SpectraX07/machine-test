@@ -194,4 +194,83 @@ final class RbacApiTest extends CIUnitTestCase
 
         $result->assertStatus(400);
     }
+
+    public function testAdminCanSyncRolePermissions(): void
+    {
+        $admin = $this->registerUser([
+            'email' => 'admin-perm@example.com',
+            'phone' => '9000000010',
+        ]);
+        $this->promoteToAdmin((int) $admin['id']);
+        $tokens = $this->loginUser('admin-perm@example.com');
+
+        $roles = $this->withHeaders($this->authHeaders($tokens['access_token']))
+            ->get('api/v1/roles');
+        $userRole = null;
+        foreach (json_decode($roles->getJSON(), true)['data'] as $role) {
+            if ($role['slug'] === 'user') {
+                $userRole = $role;
+                break;
+            }
+        }
+        $this->assertNotNull($userRole);
+
+        $sync = $this->withHeaders($this->authHeaders($tokens['access_token']))
+            ->withBodyFormat('json')
+            ->put('api/v1/roles/' . $userRole['id'] . '/permissions', [
+                'permission_slugs' => ['users.view', 'users.list'],
+            ]);
+
+        $sync->assertStatus(200);
+        $body = json_decode($sync->getJSON(), true)['data'];
+        $slugs = array_column($body['permissions'], 'slug');
+        $this->assertContains('users.view', $slugs);
+        $this->assertContains('users.list', $slugs);
+        $this->assertCount(2, $slugs);
+    }
+
+    public function testSyncRolePermissionsRejectsUnknownSlug(): void
+    {
+        $admin = $this->registerUser([
+            'email' => 'admin-badperm@example.com',
+            'phone' => '9000000011',
+        ]);
+        $this->promoteToAdmin((int) $admin['id']);
+        $tokens = $this->loginUser('admin-badperm@example.com');
+
+        $roles = $this->withHeaders($this->authHeaders($tokens['access_token']))
+            ->get('api/v1/roles');
+        $userRoleId = null;
+        foreach (json_decode($roles->getJSON(), true)['data'] as $role) {
+            if ($role['slug'] === 'user') {
+                $userRoleId = $role['id'];
+                break;
+            }
+        }
+
+        $sync = $this->withHeaders($this->authHeaders($tokens['access_token']))
+            ->withBodyFormat('json')
+            ->put('api/v1/roles/' . $userRoleId . '/permissions', [
+                'permission_slugs' => ['users.view', 'not.a.real.permission'],
+            ]);
+
+        $sync->assertStatus(400);
+    }
+
+    public function testDefaultUserCannotSyncRolePermissions(): void
+    {
+        $this->registerUser([
+            'email' => 'noperm@example.com',
+            'phone' => '9000000012',
+        ]);
+        $tokens = $this->loginUser('noperm@example.com');
+
+        $result = $this->withHeaders($this->authHeaders($tokens['access_token']))
+            ->withBodyFormat('json')
+            ->put('api/v1/roles/1/permissions', [
+                'permission_slugs' => ['users.list'],
+            ]);
+
+        $result->assertStatus(403);
+    }
 }

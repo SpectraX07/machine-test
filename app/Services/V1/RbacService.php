@@ -128,6 +128,48 @@ class RbacService
     }
 
     /**
+     * Replace all permissions on a role by permission slugs.
+     *
+     * @param list<string> $permissionSlugs
+     */
+    public function syncRolePermissions(int $roleId, array $permissionSlugs): object
+    {
+        $role = $this->roleModel->find($roleId);
+
+        if (! $role) {
+            throw new NotFoundException('Role not found.');
+        }
+
+        $permissionSlugs = array_values(array_unique(array_filter(
+            array_map(static fn ($slug) => trim((string) $slug), $permissionSlugs),
+            static fn ($slug) => $slug !== ''
+        )));
+
+        if ($permissionSlugs === []) {
+            $this->roleModel->syncPermissions($roleId, []);
+
+            return $this->roleModel->toPublic($role, true);
+        }
+
+        $permissions = $this->permissionModel->findBySlugs($permissionSlugs);
+        $foundSlugs  = array_map(static fn ($p) => $p->slug, $permissions);
+        $unknown     = array_values(array_diff($permissionSlugs, $foundSlugs));
+
+        if ($unknown !== []) {
+            throw new BadRequestException('Unknown permission slug(s).', [
+                'permission_slugs' => $unknown,
+            ]);
+        }
+
+        $this->roleModel->syncPermissions(
+            $roleId,
+            array_map(static fn ($p) => (int) $p->id, $permissions)
+        );
+
+        return $this->roleModel->toPublic($role, true);
+    }
+
+    /**
      * Attach role + permission slugs onto a public user object.
      */
     public function enrichUser(object $user): object

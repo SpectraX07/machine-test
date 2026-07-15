@@ -10,4 +10,11 @@ class RoleValidation
             'role_slug' => 'required|max_length[100]',
         ];
     }
+
+    public static function syncPermissions(): array
+    {
+        return [
+            'permission_slugs' => 'required',
+        ];
+    }
 }

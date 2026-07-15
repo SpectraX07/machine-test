@@ -27,6 +27,18 @@ class Permission extends Model
         return $this->where('slug', $slug)->first();
     }
 
+    /**
+     * @return list<object>
+     */
+    public function findBySlugs(array $slugs): array
+    {
+        if ($slugs === []) {
+            return [];
+        }
+
+        return $this->whereIn('slug', array_values(array_unique($slugs)))->findAll();
+    }
+
     public function toPublic(object $permission): object
     {
         return (object) [

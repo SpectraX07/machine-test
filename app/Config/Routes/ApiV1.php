@@ -20,6 +20,11 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1'], static funct
 
         $routes->get('roles', 'RoleController::index', ['filter' => 'permission:roles.list']);
         $routes->get('roles/(:num)', 'RoleController::show/$1', ['filter' => 'permission:roles.view']);
+        $routes->put(
+            'roles/(:num)/permissions',
+            'RoleController::syncPermissions/$1',
+            ['filter' => 'permission:roles.manage_permissions']
+        );
 
         $routes->get('permissions', 'PermissionController::index', ['filter' => 'permission:permissions.list']);
     });

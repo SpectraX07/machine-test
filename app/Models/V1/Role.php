@@ -53,6 +53,25 @@ class Role extends Model
             ->getResult();
     }
 
+    /**
+     * Replace all permissions for a role (full sync).
+     *
+     * @param list<int> $permissionIds
+     */
+    public function syncPermissions(int $roleId, array $permissionIds): void
+    {
+        $this->db->table('role_permissions')->where('role_id', $roleId)->delete();
+
+        $permissionIds = array_values(array_unique(array_map('intval', $permissionIds)));
+
+        foreach ($permissionIds as $permissionId) {
+            $this->db->table('role_permissions')->insert([
+                'role_id'       => $roleId,
+                'permission_id' => $permissionId,
+            ]);
+        }
+    }
+
     public function toPublic(object $role, bool $withPermissions = false): object
     {
         $public = (object) [
