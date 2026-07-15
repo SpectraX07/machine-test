@@ -3,6 +3,7 @@
 use CodeIgniter\Test\CIUnitTestCase;
 use CodeIgniter\Test\DatabaseTestTrait;
 use CodeIgniter\Test\FeatureTestTrait;
+use Config\Services;
 
 /**
  * @internal
@@ -16,6 +17,7 @@ final class AuthApiTest extends CIUnitTestCase
     protected $migrateOnce = false;
     protected $refresh     = true;
     protected $namespace   = 'App';
+    protected $seed        = 'App\Database\Seeds\RbacSeeder';
 
     private function registerUser(array $overrides = []): array
     {
@@ -53,6 +55,11 @@ final class AuthApiTest extends CIUnitTestCase
         return ['Authorization' => 'Bearer ' . $accessToken];
     }
 
+    private function promoteToAdmin(int $userId): void
+    {
+        Services::rbacService()->syncUserRoles($userId, ['admin']);
+    }
+
     public function testRegisterValidationFails(): void
     {
         $result = $this->withBodyFormat('json')
@@ -64,12 +71,16 @@ final class AuthApiTest extends CIUnitTestCase
 
     public function testRegisterAndLoginFlow(): void
     {
-        $this->registerUser();
+        $user = $this->registerUser();
+        $this->assertSame(['user'], $user['roles']);
+        $this->assertContains('users.view', $user['permissions']);
+
         $tokens = $this->loginUser();
 
         $this->assertArrayHasKey('access_token', $tokens);
         $this->assertArrayHasKey('refresh_token', $tokens);
         $this->assertSame('Bearer', $tokens['token_type']);
+        $this->assertSame(['user'], $tokens['user']['roles']);
     }
 
     public function testLoginWithInvalidCredentialsReturns401(): void
@@ -105,11 +116,13 @@ final class AuthApiTest extends CIUnitTestCase
 
         $body = json_decode($result->getJSON(), true);
         $this->assertSame('test@example.com', $body['data']['email']);
+        $this->assertSame(['user'], $body['data']['roles']);
     }
 
     public function testUpdateUser(): void
     {
-        $user   = $this->registerUser();
+        $user = $this->registerUser();
+        $this->promoteToAdmin((int) $user['id']);
         $tokens = $this->loginUser();
 
         $result = $this->withHeaders($this->authHeaders($tokens['access_token']))
@@ -126,7 +139,8 @@ final class AuthApiTest extends CIUnitTestCase
 
     public function testDeleteUser(): void
     {
-        $user   = $this->registerUser();
+        $user = $this->registerUser();
+        $this->promoteToAdmin((int) $user['id']);
         $tokens = $this->loginUser();
 
         $delete = $this->withHeaders($this->authHeaders($tokens['access_token']))
@@ -142,10 +156,11 @@ final class AuthApiTest extends CIUnitTestCase
 
     public function testListUsersWithCursorPagination(): void
     {
-        $this->registerUser(['email' => 'a@example.com', 'phone' => '1111111111']);
+        $a = $this->registerUser(['email' => 'a@example.com', 'phone' => '1111111111']);
         $this->registerUser(['email' => 'b@example.com', 'phone' => '2222222222']);
         $this->registerUser(['email' => 'c@example.com', 'phone' => '3333333333']);
 
+        $this->promoteToAdmin((int) $a['id']);
         $tokens = $this->loginUser('a@example.com');
 
         $page1 = $this->withHeaders($this->authHeaders($tokens['access_token']))
@@ -177,7 +192,7 @@ final class AuthApiTest extends CIUnitTestCase
 
     public function testRefreshTokenRotation(): void
     {
-        $this->registerUser();
+        $user   = $this->registerUser();
         $tokens = $this->loginUser();
 
         $result = $this->withBodyFormat('json')
@@ -199,12 +214,12 @@ final class AuthApiTest extends CIUnitTestCase
 
         // Old access JWT must be denylisted after refresh.
         $oldAccess = $this->withHeaders($this->authHeaders($tokens['access_token']))
-            ->get('api/v1/users');
+            ->get('api/v1/users/' . $user['id']);
         $oldAccess->assertStatus(401);
 
-        // New access JWT still works.
+        // New access JWT still works for a permitted route.
         $newAccess = $this->withHeaders($this->authHeaders($newTokens['access_token']))
-            ->get('api/v1/users');
+            ->get('api/v1/users/' . $user['id']);
         $newAccess->assertStatus(200);
     }
 
@@ -230,7 +245,7 @@ final class AuthApiTest extends CIUnitTestCase
 
     public function testLogoutRevokesAllTokens(): void
     {
-        $this->registerUser();
+        $user   = $this->registerUser();
         $tokens = $this->loginUser();
 
         $logout = $this->withHeaders($this->authHeaders($tokens['access_token']))
@@ -248,7 +263,7 @@ final class AuthApiTest extends CIUnitTestCase
 
         // Access JWT is denylisted immediately on logout.
         $protected = $this->withHeaders($this->authHeaders($tokens['access_token']))
-            ->get('api/v1/users');
+            ->get('api/v1/users/' . $user['id']);
         $protected->assertStatus(401);
     }
 }
