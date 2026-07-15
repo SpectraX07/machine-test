@@ -140,7 +140,7 @@ class AuthService
         );
 
         return [
-            'user'          => $this->userModel->toPublic($user),
+            'user'          => Services::rbacService()->enrichUser($this->userModel->toPublic($user)),
             'access_token'  => $access['token'],
             'refresh_token' => $refreshToken,
             'token_type'    => 'Bearer',

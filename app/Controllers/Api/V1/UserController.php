@@ -2,6 +2,7 @@
 
 namespace App\Controllers\Api\V1;
 
+use App\Validation\V1\RoleValidation;
 use App\Validation\V1\UserValidation;
 use CodeIgniter\HTTP\ResponseInterface;
 use Config\Services;
@@ -87,6 +88,30 @@ class UserController extends ApiController
             $this->userService->delete((int) $id);
 
             return $this->success(null, 'User deleted successfully.');
+        });
+    }
+
+    public function syncRoles($id = null): ResponseInterface
+    {
+        return $this->handleApi(function () use ($id) {
+            $payload = $this->getJsonPayload();
+
+            if (! isset($payload['role_slugs']) || ! is_array($payload['role_slugs'])) {
+                return $this->validationError([
+                    'role_slugs' => 'The role_slugs field must be an array of role slugs.',
+                ]);
+            }
+
+            if (! $this->validateData($payload, RoleValidation::assign())) {
+                return $this->validationError($this->validator->getErrors());
+            }
+
+            $roles = $this->userService->syncRoles(
+                (int) $id,
+                $this->validator->getValidated()['role_slugs']
+            );
+
+            return $this->success($roles, 'User roles updated successfully.');
         });
     }
 }

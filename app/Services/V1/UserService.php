@@ -5,6 +5,7 @@ namespace App\Services\V1;
 use App\Exceptions\BadRequestException;
 use App\Exceptions\NotFoundException;
 use App\Models\V1\User as UserModel;
+use Config\Services;
 use RuntimeException;
 
 class UserService
@@ -13,10 +14,12 @@ class UserService
     private const MAX_PER_PAGE     = 100;
 
     protected UserModel $userModel;
+    protected RbacService $rbacService;
 
-    public function __construct(?UserModel $userModel = null)
+    public function __construct(?UserModel $userModel = null, ?RbacService $rbacService = null)
     {
-        $this->userModel = $userModel ?? new UserModel();
+        $this->userModel   = $userModel ?? new UserModel();
+        $this->rbacService = $rbacService ?? Services::rbacService();
     }
 
     public function register(array $data): object
@@ -25,9 +28,12 @@ class UserService
             throw new RuntimeException('Unable to register user.');
         }
 
-        $user = $this->userModel->find($this->userModel->getInsertID());
+        $userId = (int) $this->userModel->getInsertID();
+        $this->rbacService->assignDefaultRole($userId);
 
-        return $this->userModel->toPublic($user);
+        $user = $this->userModel->find($userId);
+
+        return $this->rbacService->enrichUser($this->userModel->toPublic($user));
     }
 
     public function find(int $id): object
@@ -38,7 +44,7 @@ class UserService
             throw new NotFoundException('User not found.');
         }
 
-        return $this->userModel->toPublic($user);
+        return $this->rbacService->enrichUser($this->userModel->toPublic($user));
     }
 
     /**
@@ -56,7 +62,10 @@ class UserService
             array_pop($rows);
         }
 
-        $items = array_map(static fn ($user) => $user, $rows);
+        $items = array_map(
+            fn ($user) => $this->rbacService->enrichUser($user),
+            $rows
+        );
         $nextCursor = $hasMore && $items !== []
             ? (int) end($items)->id
             : null;
@@ -92,7 +101,9 @@ class UserService
             throw new RuntimeException('Unable to update user.');
         }
 
-        return $this->userModel->toPublic($this->userModel->find($id));
+        return $this->rbacService->enrichUser(
+            $this->userModel->toPublic($this->userModel->find($id))
+        );
     }
 
     public function delete(int $id): void
@@ -106,6 +117,15 @@ class UserService
         if (! $this->userModel->delete($id)) {
             throw new RuntimeException('Unable to delete user.');
         }
+    }
+
+    /**
+     * @param list<string> $roleSlugs
+     * @return list<object>
+     */
+    public function syncRoles(int $id, array $roleSlugs): array
+    {
+        return $this->rbacService->syncUserRoles($id, $roleSlugs);
     }
 
     private function normalizePerPage(?int $perPage): int
